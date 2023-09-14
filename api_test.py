@@ -1,5 +1,3 @@
-import requests
-
 import openai
 
 
@@ -14,12 +12,16 @@ def main():
         messages=[
             {
                 'role': 'user',
-                'content': 'Multiply every equation by 2. What is the result of equation: 1*30'
+                'content': 'Привет'
             }
         ]
     )
-    print(response)
-    
+    choices = response['choices']
+    for choice in choices:
+        message = choice['message']
+        print('Role', message['role'])
+        print(message['content'])
+
 
 if __name__ == '__main__':
     main()
