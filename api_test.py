@@ -8,7 +8,7 @@ with open('api_key.key') as f:
 def main():
     openai.api_key = API_KEY
     response = openai.ChatCompletion.create(
-        model='gpt-3.5-turbo',
+        model='gpt-4',
         messages=[
             {
                 'role': 'user',
