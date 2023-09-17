@@ -1,8 +1,7 @@
-from dataclasses import dataclass
+import functools
 import logging
-from typing import Any, List, Optional
 
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import (
     Application,
@@ -10,18 +9,19 @@ from telegram.ext import (
     CallbackQueryHandler,
     CommandHandler,
     MessageHandler,
-    filters
+    filters,
+    ExtBot
 )
 
 from backends import (
     AbstractBackend,
     ChatGPTBackend,
     SQLBackend,
-    DummyBackend,
-    DummyBackend2,
-    FREEBackend,
-    IdleBackend
+    FREEBackend
 )
+from chat_context import ChatContext
+from menu import Menu
+from menus import MAIN_MENU, MODE_MENU, MODEL_MENU
 
 
 logging.basicConfig(
@@ -84,37 +84,6 @@ class BackendSwitcher:
         self._mode = mode
 
 
-@dataclass
-class Menu:
-    title: str
-    markup: List[List[InlineKeyboardButton]]
-
-
-class MenuBuilder:
-
-    def __init__(self):
-        self.title: Optional[str] = None
-        self.markup: [List[List]] = []
-    
-    def add_button(self, text: str, callback_data: Any) -> 'MenuBuilder':
-        self.markup.append(
-            [InlineKeyboardButton(text, callback_data=callback_data)]
-        )
-        return self
-    
-    def set_title(self, title: str) -> 'MenuBuilder':
-        self.title = title
-        return self
-    
-    def clear(self) -> 'MenuBuilder':
-        self.title = None
-        self.markup = []
-        return self
-    
-    def build(self) -> Menu:
-        return Menu(title=self.title,
-                    markup=InlineKeyboardMarkup(self.markup))
-
 
 class BotHandlerException(Exception):
     pass
@@ -123,120 +92,149 @@ class BotHandlerException(Exception):
 class BotHandler:
 
     def __init__(self,
+                 bot: ExtBot,
                  main_menu: Menu,
                  mode_menu: Menu,
                  model_menu: Menu,
-                 switcher: BackendSwitcher):
+                 switcher: BackendSwitcher,
+                 default_backend: AbstractBackend): # maybe use Type[AbstractBackend]
         self.main_menu = main_menu
         self.mode_menu = mode_menu
         self.model_menu = model_menu
         self._switcher = switcher
+        self._default_backend = default_backend
+        self._chat_contexts = {}
+        self._bot = bot
 
-    async def show_mode(self, update: Update, context: CallbackContext) -> None:
-        await context.bot.send_message(
-            update.message.from_user.id,
+    def _create_new_chat_context(self, update: Update, context: CallbackContext):
+        self._chat_contexts[context._chat_id] = ChatContext( # maybe use dependency injection
+            chat_id=context._chat_id,
+            username=update.message.from_user.username, # make unique (remove message)
+            backend_instance=self._default_backend
+        )
+
+    def get_chat_context(self,
+                         update: Update,
+                         context: CallbackContext) -> ChatContext:
+        if context._chat_id not in self._chat_contexts:
+            self._create_new_chat_context(update, context)
+        return self._chat_contexts[context._chat_id]
+
+    def chat_context(func):
+        @functools.wraps(func)
+        async def wrapper(instance: 'BotHandler',
+                          update: Update,
+                          context: CallbackContext,
+                          *args,
+                          **kwargs):
+            chat_context = instance.get_chat_context(update, context)
+            return await func(instance,
+                              chat_context,
+                              update,
+                              context,
+                              *args,
+                              **kwargs)
+        return wrapper
+
+    async def _show_main_menu(self, chat_id: int) -> None:
+        await self._bot.send_message(chat_id,
+                                     self.main_menu.title,
+                                     parse_mode=ParseMode.HTML,
+                                     reply_markup=self.main_menu.markup)
+
+    async def _show_mode_menu(self, chat_id: int) -> None:
+        await self._bot.send_message(chat_id,
+                                     self.mode_menu.title,
+                                     parse_mode=ParseMode.HTML,
+                                     reply_markup=self.mode_menu.markup)
+
+    async def _show_model_menu(self, chat_id: int) -> None:
+        await self._bot.send_message(chat_id,
+                                     self.model_menu.title,
+                                     parse_mode=ParseMode.HTML,
+                                     reply_markup=self.model_menu.markup)
+
+    @chat_context
+    async def show_main_menu_callback(self,
+                                      chat_context: ChatContext,
+                                      update: Update,
+                                      context: CallbackContext):
+        await self._show_main_menu(chat_context.chat_id)
+
+    @chat_context
+    async def show_mode_callback(self,
+                                 chat_context: ChatContext,
+                                 update: Update,
+                                 context: CallbackContext) -> None:
+        await self._bot.send_message(
+            chat_context.chat_id,
             f'В данный момент ты в режиме {self._switcher.mode}'
         )
 
-    async def show_main_menu(self,
-                             update: Update,
-                             context: CallbackContext) -> None:
-        if update.message:
-            await context.bot.send_message(
-                update.message.from_user.id,
-                self.main_menu.title,
-                parse_mode=ParseMode.HTML,
-                reply_markup=self.main_menu.markup
-            )
-        elif update.callback_query:
-            await context.bot.send_message(
-                update.callback_query.from_user.id,
-                self.main_menu.title,
-                parse_mode=ParseMode.HTML,
-                reply_markup=self.main_menu.markup
-            )
-
-    async def show_mode_menu(self,
-                             update: Update,
-                             context: CallbackContext) -> None:
-        await context.bot.send_message(
-            update.callback_query.from_user.id,
-            self.mode_menu.title,
-            parse_mode=ParseMode.HTML,
-            reply_markup=self.mode_menu.markup
-        )
-
-    async def show_model_menu(self,
-                              update: Update,
-                              context: CallbackContext) -> None:
-        await context.bot.send_message(
-            update.callback_query.from_user.id,
-            self.model_menu.title,
-            parse_mode=ParseMode.HTML,
-            reply_markup=self.model_menu.markup
-        )
-
-    async def menu_handler(self,
-                           update: Update,
-                           context: CallbackContext) -> None:
+    @chat_context
+    async def handle_menu_callback(self,
+                                   chat_context: ChatContext,
+                                   update: Update,
+                                   context: CallbackContext) -> None:
         data = update.callback_query.data
         if data == 'MODE':
-            await self.show_mode_menu(update, context)
+            await self._show_mode_menu(chat_context.chat_id)
         elif data == 'MODEL':
-            await self.show_model_menu(update, context)
+            await self._show_model_menu(chat_context.chat_id)
         elif data == 'SQL':
             self._switcher.mode = data
-            await context.bot.send_message(
-                update.callback_query.from_user.id,
-                'Ты теперь используешь SQL режим. '
-                'Скажи мне, какой SQL запрос сконструировать'
-            )
+            await self._bot.send_message(chat_context.chat_id,
+                                         'Ты теперь используешь SQL режим. '
+                                         'Скажи мне, какой SQL запрос '
+                                         'сконструировать')
         elif data == 'FREE':
             self._switcher.mode = data
-            await context.bot.send_message(
-                update.callback_query.from_user.id,
-                'Ты теперь используешь FREE режим. '
-                'Спроси меня о чем угодно'
-            )
+            await self._send_message(chat_context.chat_id,
+                                     'Ты теперь используешь FREE режим. '
+                                     'Спроси меня о чем угодно')
         elif data == 'GPT3.5':
             if self._switcher.mode == 'IDLE':
-                await context.bot.send_message(
-                    update.callback_query.from_user.id,
-                    f'Сначала выбери режим работы'
-                )
+                await self._bot.send_message(chat_context.chat_id,
+                                             'Сначала выбери режим работы')
             else:
                 self._switcher.model_name = 'gpt-3.5-turbo'
-                await context.bot.send_message(
-                    update.callback_query.from_user.id,
-                    f'Ты теперь используешь версию {self._switcher.model_name}'
-                )
+                await self._bot.send_message(chat_context.chat_id,
+                                             'Ты теперь используешь версию '
+                                             f'{self._switcher.model_name}')
         elif data == 'GPT4':
             if self._switcher.mode == 'IDLE':
-                await context.bot.send_message(
-                    update.callback_query.from_user.id,
-                    f'Сначала выбери режим работы'
-                )
+                await context.bot.send_message(chat_context.chat_id,
+                                               f'Сначала выбери режим работы')
             else:
                 self._switcher.model_name = 'gpt-4'
-                await context.bot.send_message(
-                    update.callback_query.from_user.id,
-                    f'Ты теперь используешь версию {self._switcher.model_name}'
-                )
+                await context.bot.send_message(chat_context.chat_id,
+                                               'Ты теперь используешь версию '
+                                               f'{self._switcher.model_name}')
         elif data == 'BACK':
-            await self.show_main_menu(update, context)
+            await self._show_main_menu(chat_context.chat_id)
         else:
             raise BotHandlerException(f'Unknown query data response: {data}')
         await update.callback_query.answer()
 
-    async def chat_handler(self,
-                           update: Update,
-                           context: CallbackContext) -> None:
+    @chat_context
+    async def handle_message_callback(self,
+                                      chat_context: ChatContext,
+                                      update: Update,
+                                      context: CallbackContext) -> None:
         if not update.message.text:
             return
         answer = await self._switcher.backend.handle(update.message.text)
-        await context.bot.send_message(update.message.chat_id,
-                                       answer,
-                                       entities=update.message.entities)
+        await self._bot.send_message(chat_context.chat_id,
+                                     answer,
+                                     entities=update.message.entities)
+
+
+
+class IdleBackend(AbstractBackend):
+
+    async def handle(self, message: str) -> str:
+        return ('Привет! Я Мегафон GPT бот. Открой меню командой /menu, '
+                'и выбери режим, чтобы общаться со мной.')
 
 
 def main():
@@ -254,36 +252,23 @@ def main():
                                models=available_models,
                                default_model=default_model)
     
-    mode_title = ('<b>Выбор режима</b>\n\n'
-                  'Выбери режим, в котором хочешь работать с моделью')
-    mode_menu = (MenuBuilder().set_title(mode_title)
-                              .add_button('SQL', 'SQL')
-                              .add_button('Free', 'FREE')
-                              .add_button('Назад', 'BACK')
-                              .build())
-    model_title = ('<b>Выбор модели</b>\n\n'
-                   'Выбери версию модели с которой хочешь работать')
-    model_menu = (MenuBuilder().set_title(model_title)
-                               .add_button('GPT-3.5', 'GPT3.5')
-                               .add_button('GPT-4', 'GPT4')
-                               .add_button('Назад', 'BACK')
-                               .build())
-    main_title = '<b>Главное меню</b>\n\n'
-    main_menu = (MenuBuilder().set_title(main_title)
-                              .add_button('Режим работы', 'MODE')
-                              .add_button('Модель', 'MODEL')
-                              .build())
-    bot_handler = BotHandler(main_menu=main_menu,
-                             mode_menu=mode_menu,
-                             model_menu=model_menu,
-                             switcher=switcher)
-    
     application = Application.builder().token(BOT_TOKEN).build()
-    application.add_handler(CommandHandler('mode', bot_handler.show_mode))
-    application.add_handler(CommandHandler('menu', bot_handler.show_main_menu))
-    application.add_handler(CallbackQueryHandler(bot_handler.menu_handler))
+    bot_handler = BotHandler(bot=application.bot,
+                             main_menu=MAIN_MENU,
+                             mode_menu=MODE_MENU,
+                             model_menu=MODEL_MENU,
+                             switcher=switcher,
+                             default_backend=IdleBackend())
+    
+    application.add_handler(CommandHandler('mode',
+                                           bot_handler.show_mode_callback))
+    application.add_handler(CommandHandler('menu',
+                                           bot_handler.show_main_menu_callback))
+    application.add_handler(
+        CallbackQueryHandler(bot_handler.handle_menu_callback)
+    )
     application.add_handler(MessageHandler(~filters.COMMAND,
-                                           bot_handler.chat_handler))
+                                           bot_handler.handle_message_callback))
 
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 

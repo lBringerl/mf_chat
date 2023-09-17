@@ -96,10 +96,3 @@ class DummyBackend2(AbstractBackend):
         return (f'Hello! I\'m Dummy №2...')
 
 
-class IdleBackend(AbstractBackend):
-
-    async def handle(self, message: str) -> str:
-        return (f'Привет! Я Мегафон GPT бот. '
-                'Чтобы начать со мной общение, '
-                'открой меню командой /menu и выбери режим')
-
