@@ -28,6 +28,44 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 
+START_MESSAGE = """
+Привет! Я чат-бот Мегафона.
+Прежде, чем начать работу со мной, 
+открой меню командой /menu и выбери режим работы.
+Чтобы посмотреть список доступных команд, введи /help
+"""
+AVAILABLE_COMMANDS = """
+Вот список доступных команд:
+
+/start - вывести приветствие
+
+/help - вывести это сообщение
+
+/settings - показать значения текущих параметров
+
+/menu - открыть главное меню
+
+/mode - показать текущий режим работы
+
+/model_name <value> - установить название модели
+
+/context - показать текущий контекст
+
+/context_depth <value> - установить глубину контекста. От 1 до 30
+
+/max_tokens <value> - установить значение параметра модели `max_tokens`
+
+/temperature <value> - установить значение параметра модели `temperature`. От 0.0 до 2.0
+
+/top_p <value> - установить значение параметра модели `top_p`. От 0.0 до 1.0
+
+/frequency_penalty <value> - установить значение параметра модели `frequency_penalty`. От -2 до 2
+
+/presence_penalty <value> - установить значение параметра модели `presence_penalty`. От -2 до 2
+
+/role <value> - установить значение параметра модели `role`. 'system', 'user' или 'assistant'
+"""
+
 with open('tg_key.key', 'r') as f:
     BOT_TOKEN = f.read()
 
@@ -37,21 +75,6 @@ class BotHandlerException(Exception):
 
 
 class BotHandler:
-    AVAILABLE_COMMANDS = """
-    /menu - открыть главное меню
-
-    /parameters - показать значения текущих параметров
-    /mode - показать текущий режим работы
-    /model_name <value> - установить название модели
-    /context - показать текущий контекст
-    /context_depth <value> - установить глубину контекста. От 1 до 30
-    /max_tokens <value> - установить значение параметра модели `max_tokens`
-    /temperature <value> - установить значение параметра модели `temperature`. От 0.0 до 2.0
-    /top_p <value> - установить значение параметра модели `top_p`. От 0.0 до 1.0
-    /frequency_penalty <value> - установить значение параметра модели `frequency_penalty`. От -2 до 2
-    /presence_penalty <value> - установить значение параметра модели `presence_penalty`. От -2 до 2
-    /role <value> - установить значение параметра модели `role`. 'system', 'user' или 'assistant'
-    """
 
     def __init__(self,
                  bot: ExtBot,
@@ -153,10 +176,6 @@ class BotHandler:
                                          'Ты теперь используешь FREE режим. '
                                          'Спроси меня о чем угодно')
         elif data == 'GPT3.5':
-            if chat_context.switcher.mode == 'IDLE':
-                await self._bot.send_message(chat_context.chat_id,
-                                             'Сначала выбери режим работы')
-            else:
                 chat_context.switcher.model_name = 'gpt-3.5-turbo'
                 await self._bot.send_message(
                     chat_context.chat_id,
@@ -164,16 +183,12 @@ class BotHandler:
                     f'{chat_context.switcher.model_name}'
                 )
         elif data == 'GPT4':
-            if chat_context.switcher.mode == 'IDLE':
-                await context.bot.send_message(chat_context.chat_id,
-                                               f'Сначала выбери режим работы')
-            else:
-                chat_context.switcher.model_name = 'gpt-4'
-                await context.bot.send_message(
-                    chat_context.chat_id,
-                    'Ты теперь используешь версию '
-                    f'{chat_context.switcher.model_name}'
-                )
+            chat_context.switcher.model_name = 'gpt-4'
+            await context.bot.send_message(
+                chat_context.chat_id,
+                'Ты теперь используешь версию '
+                f'{chat_context.switcher.model_name}'
+            )
         elif data == 'BACK':
             await self._show_main_menu(chat_context.chat_id)
         else:
@@ -191,23 +206,127 @@ class BotHandler:
         await context.bot.send_message(chat_context.chat_id,
                                      answer,
                                      entities=update.message.entities)
+    @chat_context
+    async def show_welcome_callback(self,
+                                    chat_context: ChatContext,
+                                    update: Update,
+                                    context: CallbackContext) -> None:
+        await self._bot.send_message(chat_context.chat_id, START_MESSAGE)
+
+    @chat_context
+    async def show_help_callback(self,
+                                 chat_context: ChatContext,
+                                 update: Update,
+                                 context: CallbackContext) -> None:
+        await self._bot.send_message(chat_context.chat_id, AVAILABLE_COMMANDS)
     
     @chat_context
-    async def show_commands_callback(self,
-                                     chat_context: ChatContext,
-                                     update: Update,
-                                     context: CallbackContext) -> None:
+    async def show_parameters_callback(self,
+                                       chat_context: ChatContext,
+                                       update: Update,
+                                       context: CallbackContext) -> None:
+        backend = chat_context.switcher.backend
         await self._bot.send_message(
             chat_context.chat_id,
-            f'Список доступных команд: {chat_context.switcher.mode}'
+            f'model_name: {backend.model_name}\n'
+            f'/model_name <value>\n\n'
+            f'context_depth: {backend.context_depth}\n'
+            '/context_depth <value> (от 1 до 30)\n\n'
+            f'max_tokens: {backend.max_tokens}\n'
+            '/max_tokens <value> (от 0)\n\n'
+            f'temperature: {backend.temperature}\n'
+            '/temperature <value> (от 0.0 до 2.0)\n\n'
+            f'top_p: {backend.top_p}\n'
+            '/top_p <value> (от 0.0 до 1.0)\n\n'
+            f'frequency_penalty: {backend.frequency_penalty}\n'
+            '/frequency_penalty <value> (от -2.0 до 2.0)\n\n'
+            f'presence_penalty: {backend.presence_penalty}\n'
+            '/presence_penalty <value> (от -2.0 до 2.0)\n\n'
+            f'role: {backend.role}\n'
+            '/role <value> (`system`, `user` или `assistant`)'
         )
+    
+    @chat_context
+    async def set_model_name_callback(self,
+                                      chat_context: ChatContext,
+                                      update: Update,
+                                      context: CallbackContext) -> None:
+        chat_context.switcher.backend.model_name = context.args[0]
+    
+    @chat_context
+    async def show_context_callback(self,
+                                    chat_context: ChatContext,
+                                    update: Update,
+                                    context: CallbackContext) -> None:
+        msg = '\n'.join(
+            f'{i}. {el}' for i, el in enumerate(
+                chat_context.switcher.backend.context
+            )
+        )
+        await self._bot.send_message(chat_context.chat_id, msg)
+    
+    @chat_context
+    async def set_context_depth_callback(self,
+                                         chat_context: ChatContext,
+                                         update: Update,
+                                         context: CallbackContext) -> None:
+        chat_context.switcher.backend.context_depth = int(context.args[0])
+    
+    @chat_context
+    async def set_context_depth_callback(self,
+                                         chat_context: ChatContext,
+                                         update: Update,
+                                         context: CallbackContext) -> None:
+        chat_context.switcher.backend.context_depth = int(context.args[0])
+    
+    @chat_context
+    async def set_max_tokens_callback(self,
+                                      chat_context: ChatContext,
+                                      update: Update,
+                                      context: CallbackContext) -> None:
+        chat_context.switcher.backend.max_tokens = int(context.args[0])
+    
+    @chat_context
+    async def set_temperature_callback(self,
+                                       chat_context: ChatContext,
+                                       update: Update,
+                                       context: CallbackContext) -> None:
+        chat_context.switcher.backend.temperature = float(context.args[0])
+    
+    @chat_context
+    async def set_top_p_callback(self,
+                                 chat_context: ChatContext,
+                                 update: Update,
+                                 context: CallbackContext) -> None:
+        chat_context.switcher.backend.top_p = float(context.args[0])
+    
+    @chat_context
+    async def set_frequency_penalty_callback(self,
+                                             chat_context: ChatContext,
+                                             update: Update,
+                                             context: CallbackContext) -> None:
+        chat_context.switcher.backend.frequency_penalty = float(context.args[0])
 
+    @chat_context
+    async def set_presence_penalty_callback(self,
+                                            chat_context: ChatContext,
+                                            update: Update,
+                                            context: CallbackContext) -> None:
+        chat_context.switcher.backend.presence_penalty = float(context.args[0])
+
+    @chat_context
+    async def set_role_callback(self,
+                                chat_context: ChatContext,
+                                update: Update,
+                                context: CallbackContext) -> None:
+        chat_context.switcher.backend.role = context.args[0]
+
+# /role <value> - установить значение параметра модели `role`. 'system', 'user' или 'assistant'
 
 class IdleBackend(AbstractBackend):
 
     async def handle(self, message: str) -> str:
-        return ('Привет! Я Мегафон GPT бот. Открой меню командой /menu, '
-                'и выбери режим, чтобы общаться со мной.')
+        return START_MESSAGE
 
 
 def create_default_switcher():
@@ -231,11 +350,50 @@ def main():
                              mode_menu=MODE_MENU,
                              model_menu=MODEL_MENU,
                              switcher_factory=create_default_switcher)
-    
-    application.add_handler(CommandHandler('mode',
-                                           bot_handler.show_mode_callback))
-    application.add_handler(CommandHandler('menu',
-                                           bot_handler.show_main_menu_callback))
+    application.add_handler(
+        CommandHandler('start', bot_handler.show_welcome_callback)
+    )
+    application.add_handler(
+        CommandHandler('help', bot_handler.show_help_callback)
+    )
+    application.add_handler(
+        CommandHandler('settings', bot_handler.show_parameters_callback)
+    )
+    application.add_handler(
+        CommandHandler('menu', bot_handler.show_main_menu_callback)
+    )
+    application.add_handler(
+        CommandHandler('mode', bot_handler.show_mode_callback)
+    )
+    application.add_handler(
+        CommandHandler('model_name', bot_handler.set_model_name_callback)
+    )
+    application.add_handler(
+        CommandHandler('context', bot_handler.show_context_callback)
+    )
+    application.add_handler(
+        CommandHandler('context_depth', bot_handler.set_context_depth_callback)
+    )
+    application.add_handler(
+        CommandHandler('max_tokens', bot_handler.set_max_tokens_callback)
+    )
+    application.add_handler(
+        CommandHandler('temperature', bot_handler.set_temperature_callback)
+    )
+    application.add_handler(
+        CommandHandler('top_p', bot_handler.set_top_p_callback)
+    )
+    application.add_handler(
+        CommandHandler('frequency_penalty',
+                       bot_handler.set_frequency_penalty_callback)
+    )
+    application.add_handler(
+        CommandHandler('presence_penalty',
+                       bot_handler.set_presence_penalty_callback)
+    )
+    application.add_handler(
+        CommandHandler('role', bot_handler.set_role_callback)
+    )
     application.add_handler(
         CallbackQueryHandler(bot_handler.handle_menu_callback)
     )

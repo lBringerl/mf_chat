@@ -159,7 +159,7 @@ class ChatGPTBackend(AbstractBackend):
             raise ChatGPTBackendError(
                 '`role` parameter must be either "system", "user" or "assistant"'
             )
-        self._role = value    
+        self._role = value
 
 
 class FREEBackend(ChatGPTBackend):
