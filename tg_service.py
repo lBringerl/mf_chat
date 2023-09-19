@@ -1,7 +1,9 @@
+import datetime
 import functools
 import logging
 from typing import Callable
 
+import aiofiles
 from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import (
@@ -42,6 +44,8 @@ AVAILABLE_COMMANDS = """
 /help - вывести это сообщение
 
 /settings - показать значения текущих параметров
+
+/history - выгрузить историю общения с моделями
 
 /menu - открыть главное меню
 
@@ -88,6 +92,21 @@ class BotHandler:
         self._switcher_factory = switcher_factory
         self._chat_contexts = {}
         self._bot = bot
+        self._history_file_name = 'history.log'
+    
+    async def _save_ask_to_history(self,
+                                   context: ChatContext,
+                                   ask: str,
+                                   answer: str):
+        async with aiofiles.open(self._history_file_name, 'a') as f:
+            await f.write(f'{datetime.datetime.now()}:'
+                          f'{context.username}:'
+                          f'{context.switcher.model_name}:'
+                          f'{context.switcher.mode}:\n'
+                          'User input:\n'
+                          f'{ask}\n'
+                          'Model output:\n'
+                          f'{answer}\n')
 
     def _create_new_chat_context(self, update: Update, context: CallbackContext):
         self._chat_contexts[context._chat_id] = ChatContext( # maybe use dependency injection
@@ -203,6 +222,9 @@ class BotHandler:
         if not update.message.text:
             return
         answer = await chat_context.switcher.backend.handle(update.message.text)
+        await self._save_ask_to_history(context=chat_context,
+                                        ask=update.message.text,
+                                        answer=answer)
         await context.bot.send_message(chat_context.chat_id,
                                      answer,
                                      entities=update.message.entities)
@@ -320,6 +342,15 @@ class BotHandler:
                                 update: Update,
                                 context: CallbackContext) -> None:
         chat_context.switcher.backend.role = context.args[0]
+    
+    @chat_context
+    async def get_history(self,
+                          chat_context: ChatContext,
+                          update: Update,
+                          context: CallbackContext):
+        with open(self._history_file_name, 'r') as f:
+            await self._bot.send_document(chat_context.chat_id, f)
+        
 
 # /role <value> - установить значение параметра модели `role`. 'system', 'user' или 'assistant'
 
@@ -393,6 +424,9 @@ def main():
     )
     application.add_handler(
         CommandHandler('role', bot_handler.set_role_callback)
+    )
+    application.add_handler(
+        CommandHandler('history', bot_handler.get_history)
     )
     application.add_handler(
         CallbackQueryHandler(bot_handler.handle_menu_callback)
