@@ -73,6 +73,9 @@ AVAILABLE_COMMANDS = """
 with open('tg_key.key', 'r') as f:
     BOT_TOKEN = f.read()
 
+with open('allowed_users.txt', 'r') as f:
+    ALLOWED_USERS = [user for user in f.read().split('\n')]
+
 
 class BotHandlerException(Exception):
     pass
@@ -85,7 +88,7 @@ class BotHandler:
                  main_menu: Menu,
                  mode_menu: Menu,
                  model_menu: Menu,
-                 switcher_factory: Callable[[], BackendSwitcher]): # maybe use Type[AbstractBackend]
+                 switcher_factory: Callable[[str], BackendSwitcher]): # maybe use Type[AbstractBackend]
         self.main_menu = main_menu
         self.mode_menu = mode_menu
         self.model_menu = model_menu
@@ -112,7 +115,7 @@ class BotHandler:
         self._chat_contexts[context._chat_id] = ChatContext( # maybe use dependency injection
             chat_id=context._chat_id,
             username=update.message.from_user.username, # make unique (remove message)
-            switcher=self._switcher_factory()
+            switcher=self._switcher_factory(update.message.from_user.username)
         )
 
     def get_chat_context(self,
@@ -360,7 +363,17 @@ class IdleBackend(AbstractBackend):
         return START_MESSAGE
 
 
-def create_default_switcher():
+class NotAllowedBackend(AbstractBackend):
+
+    async def handle(self, message: str) -> str:
+        return 'You are not allowed to use this bot'
+
+
+def create_default_switcher(username):
+    if username not in ALLOWED_USERS:
+        return BackendSwitcher(modes={'NOT_ALLOWED': NotAllowedBackend()},
+                               default_mode='NOT_ALLOWED',
+                               default_model='')
     default_model = 'gpt-3.5-turbo'
     with open('context.txt', 'r') as f:
         sql_context = f.read()
