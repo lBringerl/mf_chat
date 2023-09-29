@@ -25,7 +25,7 @@ class ChatGPTBackend(AbstractBackend):
         openai.api_key = self._api_key
         self._context = deque([])
         self._model_name: str = 'gpt-3.5-turbo'
-        self._context_depth: int = 10
+        self._context_depth: int = 1
         self._max_tokens: Optional[int] = None
         self._temperature: Optional[float] = 1.0
         self._top_p: Optional[float] = 1.0
