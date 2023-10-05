@@ -3,3 +3,4 @@ context.txt
 *__pycache__*
 allowed_users.txt
 *.log
+*.pickle

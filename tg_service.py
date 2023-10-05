@@ -1,6 +1,8 @@
 import datetime
 import functools
 import logging
+from pathlib import Path
+import pickle
 from typing import Callable
 
 import aiofiles
@@ -93,7 +95,8 @@ class BotHandler:
         self.mode_menu = mode_menu
         self.model_menu = model_menu
         self._switcher_factory = switcher_factory
-        self._chat_contexts = {}
+        self._contexts_dump_path = 'contexts.pickle'
+        self._chat_contexts = self.load_contexts(self._contexts_dump_path)
         self._bot = bot
         self._history_file_name = 'history.log'
     
@@ -124,21 +127,37 @@ class BotHandler:
         if context._chat_id not in self._chat_contexts:
             self._create_new_chat_context(update, context)
         return self._chat_contexts[context._chat_id]
+    
+    def dump_contexts(self, dump_path: str):
+        with open(dump_path, 'wb') as f:
+            pickle.dump(self._chat_contexts, f)
+    
+    @staticmethod
+    def load_contexts(dump_path: str):
+        if Path(dump_path).exists():
+            with open(dump_path, 'rb') as f:
+                try:
+                    return pickle.load(f)
+                except (EOFError, pickle.UnpicklingError):
+                    return {}
+        return {}
 
     def chat_context(func):
         @functools.wraps(func)
-        async def wrapper(instance: 'BotHandler',
+        async def wrapper(self: 'BotHandler',
                           update: Update,
                           context: CallbackContext,
                           *args,
                           **kwargs):
-            chat_context = instance.get_chat_context(update, context)
-            return await func(instance,
-                              chat_context,
-                              update,
-                              context,
-                              *args,
-                              **kwargs)
+            chat_context = self.get_chat_context(update, context)
+            res = await func(self,
+                             chat_context,
+                             update,
+                             context,
+                             *args,
+                             **kwargs)
+            self.dump_contexts(self._contexts_dump_path)
+            return res
         return wrapper
 
     async def _show_main_menu(self, chat_id: int) -> None:

@@ -1,9 +1,16 @@
 from abc import ABC, abstractmethod
 from collections import deque
-from typing import Iterable, Optional, Tuple, Union
+from typing import Iterable, Optional, Tuple, TypeVar, Union
 
 import openai
 from openai.error import InvalidRequestError
+
+
+with open('api_key.key') as f:
+    api_key = f.read()
+    openai.api_key = api_key
+
+BackendImpl = TypeVar('BackendImpl', bound='AbstractBackend')
 
 
 class AbstractBackend(ABC):
@@ -20,9 +27,6 @@ class ChatGPTBackendError(Exception):
 class ChatGPTBackend(AbstractBackend):
 
     def __init__(self):
-        with open('api_key.key') as f:
-            self._api_key = f.read()
-        openai.api_key = self._api_key
         self._context = deque([])
         self._model_name: str = 'gpt-3.5-turbo'
         self._context_depth: int = 1
