@@ -182,6 +182,14 @@ class SQLBackend(ChatGPTBackend):
     @property
     def context(self) -> Iterable[str]:
         return deque([self._sql_context, *super().context])
+    
+    @property
+    def sql_prompt(self):
+        return self._sql_context
+    
+    @sql_prompt.setter
+    def sql_prompt(self, prompt: str):
+        self._sql_context = prompt
 
     async def handle(self, message: str) -> str:
         return self.ask(message)

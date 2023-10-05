@@ -90,7 +90,7 @@ class BotHandler:
                  main_menu: Menu,
                  mode_menu: Menu,
                  model_menu: Menu,
-                 switcher_factory: Callable[[str], BackendSwitcher]): # maybe use Type[AbstractBackend]
+                 switcher_factory: Callable[[str], BackendSwitcher]):
         self.main_menu = main_menu
         self.mode_menu = mode_menu
         self.model_menu = model_menu
@@ -270,12 +270,18 @@ class BotHandler:
                                        update: Update,
                                        context: CallbackContext) -> None:
         backend = chat_context.switcher.backend
+        if isinstance(backend, SQLBackend): # TODO: remove if
+            sql_prompt = backend.sql_prompt
+        else:
+            sql_prompt = None
         await self._bot.send_message(
             chat_context.chat_id,
             f'model_name: {backend.model_name}\n'
             f'/model_name <value>\n\n'
             f'context_depth: {backend.context_depth}\n'
             '/context_depth <value> (от 1 до 30)\n\n'
+            f'sql_prompt: {sql_prompt}\n'
+            '/sql_prompt <value> (строка с контекстом для sql режима)\n\n'
             f'max_tokens: {backend.max_tokens}\n'
             '/max_tokens <value> (от 0)\n\n'
             f'temperature: {backend.temperature}\n'
@@ -316,6 +322,17 @@ class BotHandler:
                                          context: CallbackContext) -> None:
         chat_context.switcher.backend.context_depth = int(context.args[0])
     
+    @chat_context
+    async def set_sql_prompt_callback(self,
+                                      chat_context: ChatContext,
+                                      update: Update,
+                                      context: CallbackContext) -> None:
+        if not isinstance(chat_context.switcher.backend, SQLBackend):
+            await self._bot.send_message(chat_context.chat_id,
+                                         'Сначала нужно перейти в режим SQL')
+            return
+        chat_context.switcher.backend.sql_prompt = ' '.join(context.args)
+
     @chat_context
     async def set_context_depth_callback(self,
                                          chat_context: ChatContext,
@@ -436,6 +453,9 @@ def main():
     )
     application.add_handler(
         CommandHandler('context_depth', bot_handler.set_context_depth_callback)
+    )
+    application.add_handler(
+        CommandHandler('sql_prompt', bot_handler.set_sql_prompt_callback)
     )
     application.add_handler(
         CommandHandler('max_tokens', bot_handler.set_max_tokens_callback)
