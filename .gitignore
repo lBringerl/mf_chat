@@ -4,3 +4,4 @@ context.txt
 allowed_users.txt
 *.log
 *.pickle
+table_descriptions.txt

@@ -20,13 +20,15 @@ class SimpleEncoder:
         )
     
     def gen_key(self, counter=0):
-        yield f'__#{self._counter}__'
-        counter += 1
+        while 1:
+            yield f'__#{counter}__'
+            counter += 1
 
     def _create_encoding_mapping(self, tokens: Iterable[str]) -> dict:
         mapping = {}
+        # key_gen = self.gen_key()
         for key, token in zip(self.gen_key(), tokens):
-            mapping[key] = token
+            mapping[token] = key
         return mapping
     
     def _create_decoding_mapping(
@@ -58,7 +60,7 @@ class SimpleEncoder:
         if not match:
             raise ValueError('Table description is not in appropriate format.'
                              'Couldn\'t find table name in first line')
-        _, table = match
+        table = match[1]
         tokens.add(table)
         if len(lines) < 2:
             raise ValueError('Table description is not in appropriate format.'
@@ -72,15 +74,29 @@ class SimpleEncoder:
     def encode(self, data: str) -> str:
         # TODO: Must work in pair with decode. If mapping is changed, decode
         # should't be called
-        tokens = data.split(' ')
-        for i, token in enumerate(tokens):
-            tokens[i] = self._encoding_mapping.get(token, token)
-        return ' '.join(tokens)
+        words = data.split(' ')
+        pattern = re.compile('([\w\d._]+)')
+        for i, word in enumerate(words):
+            matches = pattern.findall(word)
+            if len(matches) == 0:
+                continue
+            tokens = [t for t in matches if t in self._encoding_mapping.keys()]
+            for token in tokens:
+                word = word.replace(token, self._encoding_mapping[token])
+            words[i] = word
+        return ' '.join(words)
 
     def decode(self, data: str) -> str:
         # TODO: Must work in pair with decode. If mapping is changed, decode
         # should't be called
-        tokens = data.split(' ')
-        for i, token in enumerate(tokens):
-            tokens[i] = self._decoding_mapping.get(token, token)
-        return ' '.join(tokens)
+        words = data.split(' ')
+        pattern = re.compile('(__#[\d]+__)')
+        for i, word in enumerate(words):
+            matches = pattern.findall(word)
+            if len(matches) == 0:
+                continue
+            tokens = [t for t in matches if t in self._decoding_mapping.keys()]
+            for token in tokens:
+                word = word.replace(token, self._decoding_mapping[token])
+            words[i] = word
+        return ' '.join(words)
