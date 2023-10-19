@@ -3,7 +3,8 @@ import functools
 import logging
 from pathlib import Path
 import pickle
-from typing import Callable
+import re
+from typing import Callable, Dict
 
 import aiofiles
 from telegram import Update
@@ -20,6 +21,8 @@ from telegram.ext import (
 
 from backends import AbstractBackend, SQLBackend, FREEBackend
 from chat_context import BackendSwitcher, ChatContext
+from description import DescriptionParser
+from encoder import SimpleEncoder
 from menu import Menu
 from menus import MAIN_MENU, MODE_MENU, MODEL_MENU
 
@@ -32,6 +35,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 
+MAX_MESSAGE_LENGTH=4096
 START_MESSAGE = """
 Привет! Я чат-бот Мегафона.
 Прежде, чем начать работу со мной, 
@@ -78,6 +82,8 @@ with open('tg_key.key', 'r') as f:
 with open('allowed_users.txt', 'r') as f:
     ALLOWED_USERS = [user for user in f.read().split('\n')]
 
+PROJECT_DIR = Path(__file__).parent
+
 
 class BotHandlerException(Exception):
     pass
@@ -90,7 +96,9 @@ class BotHandler:
                  main_menu: Menu,
                  mode_menu: Menu,
                  model_menu: Menu,
-                 switcher_factory: Callable[[str], BackendSwitcher]):
+                 switcher_factory: Callable[[str], BackendSwitcher],
+                 encoder: SimpleEncoder,
+                 description_parser: DescriptionParser):
         self.main_menu = main_menu
         self.mode_menu = mode_menu
         self.model_menu = model_menu
@@ -99,6 +107,8 @@ class BotHandler:
         self._chat_contexts = self.load_contexts(self._contexts_dump_path)
         self._bot = bot
         self._history_file_name = 'history.log'
+        self._encoder = encoder
+        self._description_parser = description_parser
     
     async def _save_ask_to_history(self,
                                    context: ChatContext,
@@ -236,20 +246,73 @@ class BotHandler:
             raise BotHandlerException(f'Unknown query data response: {data}')
         await update.callback_query.answer()
 
+    def _find_table_mentions(self,
+                             description_parser: DescriptionParser,
+                             data: str) -> Dict[str, bool]:
+        valid_mentions = {}
+        matches = re.findall('\$([\w.]+)', data)
+        tables = description_parser.tables
+        for match in matches:
+            valid_mentions[match] = match in tables
+        return valid_mentions
+    
     @chat_context
     async def handle_message_callback(self,
                                       chat_context: ChatContext,
                                       update: Update,
                                       context: CallbackContext) -> None:
-        if not update.message.text:
+        input_message = update.message.text
+        if not input_message:
             return
-        answer = await chat_context.switcher.backend.handle(update.message.text)
+        # TODO: Refactor. Too big function. Distinguish SQL and FREE modes
+        mentions = self._find_table_mentions(self._description_parser,
+                                             input_message)
+        input_message = input_message.replace('$', '')
+        if not all(mentions.values()):
+            not_found_tables = [k for k, v in mentions.items() if not v]
+            msg = f'Tables {not_found_tables} were not found.'
+            await context.bot.send_message(chat_context.chat_id,
+                                           msg,
+                                           entities=update.message.entities)
+            return
+
+        encoded_additional_context = []
+        for table in mentions:
+            encoded_additional_context.append(
+                self._encoder.encode(
+                    self._description_parser.get_table_description(table)
+                )
+            )
+        encoded_message = '\n'.join(
+            encoded_additional_context
+        ) + f'\n{self._encoder.encode(input_message)}'
+        # await context.bot.send_message(chat_context.chat_id,
+        #                                encoded_message,
+        #                                entities=update.message.entities)
+        answer = await chat_context.switcher.backend.handle(encoded_message)
+        decoded_answer = self._encoder.decode(answer)
         await self._save_ask_to_history(context=chat_context,
-                                        ask=update.message.text,
-                                        answer=answer)
-        await context.bot.send_message(chat_context.chat_id,
-                                     answer,
-                                     entities=update.message.entities)
+                                        ask=self._encoder.decode(encoded_message),
+                                        answer=decoded_answer)
+        for i in range(len(decoded_answer) // MAX_MESSAGE_LENGTH):
+            print(len(decoded_answer[i * MAX_MESSAGE_LENGTH:(i + 1) * MAX_MESSAGE_LENGTH + 1]))
+            await context.bot.send_message(
+                chat_context.chat_id,
+                decoded_answer[i * MAX_MESSAGE_LENGTH:(i + 1) * MAX_MESSAGE_LENGTH + 1],
+                entities=update.message.entities
+            )
+        left = len(decoded_answer) % MAX_MESSAGE_LENGTH
+        if left:
+            await context.bot.send_message(chat_context.chat_id,
+                                           decoded_answer[-left:],
+                                           entities=update.message.entities)
+        # await context.bot.send_message(chat_context.chat_id,
+        #                                answer,
+        #                                entities=update.message.entities)
+        # await context.bot.send_message(chat_context.chat_id,
+        #                                decoded_answer,
+        #                                entities=update.message.entities)
+
     @chat_context
     async def show_welcome_callback(self,
                                     chat_context: ChatContext,
@@ -389,9 +452,7 @@ class BotHandler:
                           context: CallbackContext):
         with open(self._history_file_name, 'r') as f:
             await self._bot.send_document(chat_context.chat_id, f)
-        
 
-# /role <value> - установить значение параметра модели `role`. 'system', 'user' или 'assistant'
 
 class IdleBackend(AbstractBackend):
 
@@ -425,11 +486,15 @@ def create_default_switcher(username):
 
 def main():
     application = Application.builder().token(BOT_TOKEN).build()
+    description_parser = DescriptionParser(f'{PROJECT_DIR}/table_descriptions')
+    encoder = SimpleEncoder(description_parser)
     bot_handler = BotHandler(bot=application.bot,
                              main_menu=MAIN_MENU,
                              mode_menu=MODE_MENU,
                              model_menu=MODEL_MENU,
-                             switcher_factory=create_default_switcher)
+                             switcher_factory=create_default_switcher,
+                             encoder=encoder,
+                             description_parser=description_parser)
     application.add_handler(
         CommandHandler('start', bot_handler.show_welcome_callback)
     )

@@ -1,19 +1,21 @@
 import re
-from typing import Dict, Iterable, Optional, Set
+from typing import Dict, Iterable, Set
+
+from description import DescriptionParser
 
 
 class SimpleEncoder:
 
-    def __init__(self, description_file: Optional[str] = None):
-        self._table_pattern = re.compile('"([\w.]+)":$')
-        self._column_pattern = re.compile('-\s([\w\d_]+)\s')
+    def __init__(self, description_parser: DescriptionParser):
         self._encoding_mapping = {}
         self._decoding_mapping = {}
-        if description_file:
-            self.reload_description(description_file)
+        self._description_parser = description_parser
+        self.reload_mapping()
     
-    def reload_description(self, filename: str):
-        tokens = self._parse_file(filename)
+    def reload_mapping(self):
+        tokens = set(self._description_parser.tables)
+        for table in self._description_parser.tables:
+            tokens |= set(self._description_parser.get_table_columns(table))
         self._encoding_mapping = self._create_encoding_mapping(tokens)
         self._decoding_mapping = self._create_decoding_mapping(
             self._encoding_mapping
@@ -21,7 +23,7 @@ class SimpleEncoder:
     
     def gen_key(self, counter=0):
         while 1:
-            yield f'__#{counter}__'
+            yield f'unknown#{counter}'
             counter += 1
 
     def _create_encoding_mapping(self, tokens: Iterable[str]) -> dict:
@@ -39,37 +41,6 @@ class SimpleEncoder:
         for k, v in encoding_mapping.items():
             mapping[v] = k
         return mapping
-        
-    def _parse_file(self, filename: str) -> Set[str]:
-        tokens = set()
-        with open(filename, 'r') as f:
-            data = f.read()
-        descriptions = data.split('\n\n')
-        for desc in map(str.strip, descriptions):
-            if desc:
-                tokens |= self._parse_description(desc)
-        return tokens
-
-    def _parse_description(self, data: str) -> Set[str]:
-        tokens = set()
-        lines = data.split('\n')
-        if len(lines) == 0:
-            raise ValueError('Table description is not in appropriate format.'
-                             'Couldn\'t find any lines')
-        match = self._table_pattern.search(lines[0])
-        if not match:
-            raise ValueError('Table description is not in appropriate format.'
-                             'Couldn\'t find table name in first line')
-        table = match[1]
-        tokens.add(table)
-        if len(lines) < 2:
-            raise ValueError('Table description is not in appropriate format.'
-                             'No column descriptions were found')
-        for line in lines[1:]:
-            match = self._column_pattern.search(line)
-            if match:
-                tokens.add(match[1])
-        return tokens
 
     def encode(self, data: str) -> str:
         # TODO: Must work in pair with decode. If mapping is changed, decode
@@ -90,7 +61,7 @@ class SimpleEncoder:
         # TODO: Must work in pair with decode. If mapping is changed, decode
         # should't be called
         words = data.split(' ')
-        pattern = re.compile('(__#[\d]+__)')
+        pattern = re.compile('(unknown#[\d]+)')
         for i, word in enumerate(words):
             matches = pattern.findall(word)
             if len(matches) == 0:

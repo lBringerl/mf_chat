@@ -5,3 +5,4 @@ allowed_users.txt
 *.log
 *.pickle
 table_descriptions.txt
+table_descriptions/
