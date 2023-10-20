@@ -1,8 +1,5 @@
 *.key
-context.txt
 *__pycache__*
-allowed_users.txt
 *.log
 *.pickle
-table_descriptions.txt
-table_descriptions/
+chatbot_secrets/
