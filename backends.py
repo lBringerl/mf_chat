@@ -1,14 +1,14 @@
 from abc import ABC, abstractmethod
 from collections import deque
+from settings import OPENAI_KEY
 from typing import Iterable, List, Optional, Tuple, TypeVar, Union
 
 import openai
 from openai.error import InvalidRequestError
 
 
-with open('api_key.key') as f:
-    api_key = f.read()
-    openai.api_key = api_key
+api_key = OPENAI_KEY.read_text()
+openai.api_key = api_key
 
 BackendImpl = TypeVar('BackendImpl', bound='AbstractBackend')
 

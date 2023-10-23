@@ -25,6 +25,14 @@ from description import DescriptionParser
 from encoder import SimpleEncoder
 from menu import Menu
 from menus import MAIN_MENU, MODE_MENU, MODEL_MENU
+from settings import (
+    ALLOWED_USERS,
+    BOT_KEY,
+    CONTEXTS_DUMPS,
+    HISTORY,
+    SQL_CONTEXT,
+    TABLE_DESCRIPTIONS
+) 
 
 
 logging.basicConfig(
@@ -76,13 +84,9 @@ AVAILABLE_COMMANDS = """
 /role <value> - установить значение параметра модели `role`. 'system', 'user' или 'assistant'
 """
 
-with open('tg_key.key', 'r') as f:
-    BOT_TOKEN = f.read()
+BOT_TOKEN = BOT_KEY.read_text()
 
-with open('allowed_users.txt', 'r') as f:
-    ALLOWED_USERS = [user for user in f.read().split('\n')]
-
-PROJECT_DIR = Path(__file__).parent
+ALLOWED_USERS = [user for user in ALLOWED_USERS.read_text().split('\n')]
 
 
 class BotHandlerException(Exception):
@@ -103,10 +107,10 @@ class BotHandler:
         self.mode_menu = mode_menu
         self.model_menu = model_menu
         self._switcher_factory = switcher_factory
-        self._contexts_dump_path = 'contexts.pickle'
+        self._contexts_dump_path = str(CONTEXTS_DUMPS)
         self._chat_contexts = self.load_contexts(self._contexts_dump_path)
         self._bot = bot
-        self._history_file_name = 'history.log'
+        self._history_file_name = str(HISTORY)
         self._encoder = encoder
         self._description_parser = description_parser
     
@@ -250,12 +254,12 @@ class BotHandler:
                              description_parser: DescriptionParser,
                              data: str) -> Dict[str, bool]:
         valid_mentions = {}
-        matches = re.findall('\$([\w.]+)', data)
-        tables = description_parser.tables
+        matches = map(str.lower, re.findall('\$([\w.]+)', data))
+        table_names = description_parser.tables
         for match in matches:
-            valid_mentions[match] = match in tables
+            valid_mentions[match] = match in table_names
         return valid_mentions
-    
+
     @chat_context
     async def handle_message_callback(self,
                                       chat_context: ChatContext,
@@ -277,23 +281,27 @@ class BotHandler:
             return
 
         encoded_additional_context = []
+        decoding_mapping = {}
         for table in mentions:
-            encoded_additional_context.append(
-                self._encoder.encode(
-                    self._description_parser.get_table_description(table)
-                )
+            encoded_table, table_decoding_mapping = self._encoder.encode(
+                self._description_parser.get_table_description(table)
             )
-        encoded_message = '\n'.join(
-            encoded_additional_context
-        ) + f'\n{self._encoder.encode(input_message)}'
-        # await context.bot.send_message(chat_context.chat_id,
-        #                                encoded_message,
-        #                                entities=update.message.entities)
-        answer = await chat_context.switcher.backend.handle(encoded_message)
-        decoded_answer = self._encoder.decode(answer)
-        await self._save_ask_to_history(context=chat_context,
-                                        ask=self._encoder.decode(encoded_message),
-                                        answer=decoded_answer)
+            encoded_additional_context.append(encoded_table)
+            decoding_mapping.update(table_decoding_mapping)
+        encoded_msg, msg_decoding_mapping = self._encoder.encode(input_message)
+        decoding_mapping.update(msg_decoding_mapping)
+        encoded_message_full = (f'{encoded_msg}\n'
+                                '\n'.join(encoded_additional_context))
+        await context.bot.send_message(chat_context.chat_id,
+                                       encoded_message_full,
+                                       entities=update.message.entities)
+        answer = await chat_context.switcher.backend.handle(encoded_message_full)
+        decoded_answer = self._encoder.decode(answer, decoding_mapping)
+        await self._save_ask_to_history(
+            context=chat_context,
+            ask=self._encoder.decode(encoded_message_full, decoding_mapping),
+            answer=decoded_answer
+        )
         for i in range(len(decoded_answer) // MAX_MESSAGE_LENGTH):
             print(len(decoded_answer[i * MAX_MESSAGE_LENGTH:(i + 1) * MAX_MESSAGE_LENGTH + 1]))
             await context.bot.send_message(
@@ -472,8 +480,7 @@ def create_default_switcher(username):
                                default_mode='NOT_ALLOWED',
                                default_model='')
     default_model = 'gpt-3.5-turbo'
-    with open('context.txt', 'r') as f:
-        sql_context = f.read()
+    sql_context = SQL_CONTEXT.read_text()
     modes = {
         'SQL': SQLBackend(sql_context),
         'FREE': FREEBackend(),
@@ -486,7 +493,7 @@ def create_default_switcher(username):
 
 def main():
     application = Application.builder().token(BOT_TOKEN).build()
-    description_parser = DescriptionParser(f'{PROJECT_DIR}/table_descriptions')
+    description_parser = DescriptionParser(TABLE_DESCRIPTIONS)
     encoder = SimpleEncoder(description_parser)
     bot_handler = BotHandler(bot=application.bot,
                              main_menu=MAIN_MENU,

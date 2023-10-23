@@ -1,5 +1,5 @@
 import re
-from typing import Dict, Iterable, Set
+from typing import Dict, Iterable, Tuple
 
 from description import DescriptionParser
 
@@ -28,7 +28,6 @@ class SimpleEncoder:
 
     def _create_encoding_mapping(self, tokens: Iterable[str]) -> dict:
         mapping = {}
-        # key_gen = self.gen_key()
         for key, token in zip(self.gen_key(), tokens):
             mapping[token] = key
         return mapping
@@ -42,32 +41,36 @@ class SimpleEncoder:
             mapping[v] = k
         return mapping
 
-    def encode(self, data: str) -> str:
-        # TODO: Must work in pair with decode. If mapping is changed, decode
-        # should't be called
+    def encode(self, data: str) -> Tuple[str, dict[str, str]]:
+        decoding_mapping = {}
         words = data.split(' ')
         pattern = re.compile('([\w\d._]+)')
         for i, word in enumerate(words):
             matches = pattern.findall(word)
             if len(matches) == 0:
                 continue
-            tokens = [t for t in matches if t in self._encoding_mapping.keys()]
-            for token in tokens:
-                word = word.replace(token, self._encoding_mapping[token])
+            for match in matches:
+                token = match.lower()
+                if not token in self._encoding_mapping.keys():
+                    continue
+                token_encoded = self._encoding_mapping[token]
+                decoding_mapping[token_encoded] = decoding_mapping.get(
+                    token_encoded, match
+                )
+                word = word.replace(match, token_encoded)
             words[i] = word
-        return ' '.join(words)
+        return ' '.join(words), decoding_mapping
 
-    def decode(self, data: str) -> str:
-        # TODO: Must work in pair with decode. If mapping is changed, decode
-        # should't be called
+    @staticmethod
+    def decode(data: str, decoding_mapping: dict[str, str]) -> str:
         words = data.split(' ')
         pattern = re.compile('(unknown#[\d]+)')
         for i, word in enumerate(words):
             matches = pattern.findall(word)
             if len(matches) == 0:
                 continue
-            tokens = [t for t in matches if t in self._decoding_mapping.keys()]
+            tokens = [t for t in matches if t in decoding_mapping.keys()]
             for token in tokens:
-                word = word.replace(token, self._decoding_mapping[token])
+                word = word.replace(token, decoding_mapping[token])
             words[i] = word
         return ' '.join(words)
