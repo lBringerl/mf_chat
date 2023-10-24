@@ -17,9 +17,6 @@ class SimpleEncoder:
         for table in self._description_parser.tables:
             tokens |= set(self._description_parser.get_table_columns(table))
         self._encoding_mapping = self._create_encoding_mapping(tokens)
-        self._decoding_mapping = self._create_decoding_mapping(
-            self._encoding_mapping
-        )
     
     def gen_key(self, counter=0):
         while 1:
@@ -30,15 +27,6 @@ class SimpleEncoder:
         mapping = {}
         for key, token in zip(self.gen_key(), tokens):
             mapping[token] = key
-        return mapping
-    
-    def _create_decoding_mapping(
-            self,
-            encoding_mapping: Dict[str, str]
-    ) -> Dict[str, str]:
-        mapping = {}
-        for k, v in encoding_mapping.items():
-            mapping[v] = k
         return mapping
 
     def encode(self, data: str) -> Tuple[str, dict[str, str]]:
